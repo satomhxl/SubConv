@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # coding=utf-8
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+from typing import Optional
+from pydantic import BaseModel
 
 import httpx
 import hashlib
 import hmac
 import time
+import os
+import secrets
 
 import yaml
 
@@ -20,6 +24,11 @@ from pathlib import Path
 import re
 
 DISALLOW_ROBOTS = True  # Block search engines by default
+
+# Password protection configuration
+ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "")  # Read from environment variable
+PASSWORD_ENABLED = bool(ACCESS_PASSWORD)  # Enable password protection if set
+SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))  # Secret key for token generation
 
 """
 main routine
@@ -71,6 +80,72 @@ from modules.convert import converter
 from modules import config
 
 
+# Pydantic models for authentication
+class AuthRequest(BaseModel):
+    password: str
+
+class AuthResponse(BaseModel):
+    success: bool
+    token: Optional[str] = None
+    message: str
+
+
+# Authentication functions
+def generate_access_token(password: str) -> str:
+    """Generate a secure access token using HMAC-SHA256"""
+    timestamp = str(int(time.time()))
+    message = f"{password}:{timestamp}"
+    token = hmac.new(
+        SECRET_KEY.encode(),
+        message.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    return f"{token}:{timestamp}"
+
+
+def verify_access_token(token: str) -> bool:
+    """Verify the access token"""
+    if not PASSWORD_ENABLED:
+        return True  # No password protection, allow access
+    
+    if not token:
+        return False
+    
+    try:
+        token_hash, timestamp = token.split(":")
+        message = f"{ACCESS_PASSWORD}:{timestamp}"
+        expected_token = hmac.new(
+            SECRET_KEY.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(token_hash, expected_token)
+    except (ValueError, AttributeError):
+        return False
+
+
+def verify_password(password: str) -> bool:
+    """Verify the provided password"""
+    if not PASSWORD_ENABLED:
+        return True  # No password protection
+    return hmac.compare_digest(password, ACCESS_PASSWORD)
+
+
+# Dependency for protected routes
+async def verify_auth(x_access_token: Optional[str] = Header(None, alias="X-Access-Token")):
+    """Dependency to verify authentication for protected routes"""
+    if not PASSWORD_ENABLED:
+        return True  # No password protection enabled
+    
+    if not x_access_token or not verify_access_token(x_access_token):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Invalid or missing access token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    return True
+
+
 def length(sth):
     if sth is None:
         return 0
@@ -78,6 +153,41 @@ def length(sth):
         return len(sth)
 
 app = FastAPI()
+
+
+# Authentication endpoint
+@app.post("/auth/verify", response_model=AuthResponse)
+async def auth_verify(auth_request: AuthRequest):
+    """Verify password and return access token"""
+    if not PASSWORD_ENABLED:
+        return AuthResponse(
+            success=True,
+            token="",
+            message="Password protection is not enabled"
+        )
+    
+    if verify_password(auth_request.password):
+        token = generate_access_token(auth_request.password)
+        return AuthResponse(
+            success=True,
+            token=token,
+            message="Authentication successful"
+        )
+    else:
+        return AuthResponse(
+            success=False,
+            message="Invalid password"
+        )
+
+
+@app.get("/auth/check")
+async def auth_check(x_access_token: Optional[str] = Header(None, alias="X-Access-Token")):
+    """Check if the current token is valid"""
+    if not PASSWORD_ENABLED:
+        return JSONResponse(content={"valid": True, "password_enabled": False})
+    
+    is_valid = verify_access_token(x_access_token)
+    return JSONResponse(content={"valid": is_valid, "password_enabled": True})
 
 
 # mainpage
@@ -96,7 +206,7 @@ async def robots():
 
 # subscription to proxy-provider
 @app.get("/provider")
-async def provider(request: Request):
+async def provider(request: Request, auth: bool = Depends(verify_auth)):
     headers = {'Content-Type': 'text/yaml;charset=utf-8'}
     url = request.query_params.get("url")
     async with httpx.AsyncClient() as client:
@@ -109,7 +219,7 @@ async def provider(request: Request):
     
 # subscription converter api
 @app.get("/sub")
-async def sub(request: Request):
+async def sub(request: Request, auth: bool = Depends(verify_auth)):
     args = request.query_params
     # get interval
     if "interval" in args:
@@ -205,7 +315,7 @@ async def sub(request: Request):
 
 # proxy
 @app.get("/proxy")
-async def proxy(request: Request, url: str):
+async def proxy(request: Request, url: str, auth: bool = Depends(verify_auth)):
     # check if url is in whitelist
     is_whitelisted = False
     for rule in config.configInstance.RULESET:

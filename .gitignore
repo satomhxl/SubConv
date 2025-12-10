@@ -13,5 +13,6 @@ CLAUDE.md
 .env.*.local
 
 # Config files with sensitive data
+config.yaml
 config.local.yaml
 config.prod.yaml
