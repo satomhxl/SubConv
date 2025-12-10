@@ -6,3 +6,12 @@ node_modules/
 docs/.vitepress/cache/
 dist/
 CLAUDE.md
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Config files with sensitive data
+config.local.yaml
+config.prod.yaml

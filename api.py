@@ -8,6 +8,9 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 import httpx
+import hashlib
+import hmac
+import time
 
 import yaml
 
@@ -15,9 +18,8 @@ from urllib.parse import urlencode
 import argparse
 from pathlib import Path
 import re
-import os
 
-DISALLOW_ROBOTS = bool(eval(os.environ.get("DISALLOW_ROBOTS", "False")))
+DISALLOW_ROBOTS = True  # Block search engines by default
 
 """
 main routine
@@ -76,6 +78,7 @@ def length(sth):
         return len(sth)
 
 app = FastAPI()
+
 
 # mainpage
 app.mount("/static", StaticFiles(directory="static"), name="static")
