@@ -159,6 +159,14 @@ app = FastAPI()
 @app.post("/auth/verify", response_model=AuthResponse)
 async def auth_verify(auth_request: AuthRequest):
     """Verify password and return access token"""
+    # Debug logging
+    print(f"[AUTH DEBUG] PASSWORD_ENABLED: {PASSWORD_ENABLED}")
+    print(f"[AUTH DEBUG] ACCESS_PASSWORD set: {bool(ACCESS_PASSWORD)}")
+    print(f"[AUTH DEBUG] ACCESS_PASSWORD length: {len(ACCESS_PASSWORD) if ACCESS_PASSWORD else 0}")
+    print(f"[AUTH DEBUG] Input password length: {len(auth_request.password)}")
+    print(f"[AUTH DEBUG] SECRET_KEY set: {bool(SECRET_KEY)}")
+    print(f"[AUTH DEBUG] SECRET_KEY length: {len(SECRET_KEY) if SECRET_KEY else 0}")
+    
     if not PASSWORD_ENABLED:
         return AuthResponse(
             success=True,
@@ -166,7 +174,10 @@ async def auth_verify(auth_request: AuthRequest):
             message="Password protection is not enabled"
         )
     
-    if verify_password(auth_request.password):
+    password_match = verify_password(auth_request.password)
+    print(f"[AUTH DEBUG] Password match result: {password_match}")
+    
+    if password_match:
         token = generate_access_token(auth_request.password)
         return AuthResponse(
             success=True,
