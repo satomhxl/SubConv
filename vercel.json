@@ -16,6 +16,14 @@
       "dest": "/api.py"
     },
     {
+      "src": "/auth/verify",
+      "dest": "/api.py"
+    },
+    {
+      "src": "/auth/check",
+      "dest": "/api.py"
+    },
+    {
       "src": "/sub(.*)",
       "dest": "/api.py"
     },

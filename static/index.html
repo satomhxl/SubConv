@@ -165,15 +165,34 @@
     };
 
     // Check authentication on page load
-    // Only show overlay if we need to authenticate
-    (function () {
-      const token = localStorage.getItem(AUTH_TOKEN_KEY);
-      if (!token) {
-        // No token, show overlay immediately
-        showAuthOverlay();
+    // Always check with server first before showing overlay
+    (async function () {
+      try {
+        const token = localStorage.getItem(AUTH_TOKEN_KEY);
+        const response = await fetch('/auth/check', {
+          headers: token ? { 'X-Access-Token': token } : {}
+        });
+        const data = await response.json();
+
+        if (!data.password_enabled) {
+          // Password protection is disabled, ensure overlay is hidden
+          hideAuthOverlay();
+        } else if (!data.valid) {
+          // Password protection is enabled but token is invalid
+          showAuthOverlay();
+        } else {
+          // Password protection is enabled and token is valid
+          hideAuthOverlay();
+        }
+      } catch (error) {
+        console.error('Auth check failed:', error);
+        // On error, check if we have a token
+        const token = localStorage.getItem(AUTH_TOKEN_KEY);
+        if (!token) {
+          // No token and can't reach server, show overlay to be safe
+          showAuthOverlay();
+        }
       }
-      // Always check auth status with server
-      checkAuth();
     })();
   </script>
 
