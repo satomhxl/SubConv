@@ -132,17 +132,33 @@ def verify_password(password: str) -> bool:
 
 
 # Dependency for protected routes
-async def verify_auth(x_access_token: Optional[str] = Header(None, alias="X-Access-Token")):
-    """Dependency to verify authentication for protected routes"""
+async def verify_auth(
+    request: Request,
+    x_access_token: Optional[str] = Header(None, alias="X-Access-Token")
+):
+    """Dependency to verify authentication for protected routes
+    
+    Supports two authentication methods:
+    1. X-Access-Token header (for web frontend)
+    2. password query parameter (for Clash Verge and other clients)
+    """
     if not PASSWORD_ENABLED:
         return True  # No password protection enabled
     
-    if not x_access_token or not verify_access_token(x_access_token):
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized: Invalid or missing access token",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
+    # Check URL password parameter first (for Clash Verge etc.)
+    url_password = request.query_params.get("password")
+    if url_password and verify_password(url_password):
+        return True
+    
+    # Then check X-Access-Token header (for web frontend)
+    if x_access_token and verify_access_token(x_access_token):
+        return True
+    
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized: Invalid or missing access token/password",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
     return True
 
 
