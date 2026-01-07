@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 # coding=utf-8
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-from typing import Optional
-from pydantic import BaseModel
 
 import httpx
-import hashlib
-import hmac
-import time
-import os
-import secrets
 
 import yaml
 
@@ -24,11 +17,6 @@ from pathlib import Path
 import re
 
 DISALLOW_ROBOTS = True  # Block search engines by default
-
-# Password protection configuration
-ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "")  # Read from environment variable
-PASSWORD_ENABLED = bool(ACCESS_PASSWORD)  # Enable password protection if set
-SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))  # Secret key for token generation
 
 """
 main routine
@@ -80,87 +68,6 @@ from modules.convert import converter
 from modules import config
 
 
-# Pydantic models for authentication
-class AuthRequest(BaseModel):
-    password: str
-
-class AuthResponse(BaseModel):
-    success: bool
-    token: Optional[str] = None
-    message: str
-
-
-# Authentication functions
-def generate_access_token(password: str) -> str:
-    """Generate a secure access token using HMAC-SHA256"""
-    timestamp = str(int(time.time()))
-    message = f"{password}:{timestamp}"
-    token = hmac.new(
-        SECRET_KEY.encode(),
-        message.encode(),
-        hashlib.sha256
-    ).hexdigest()
-    return f"{token}:{timestamp}"
-
-
-def verify_access_token(token: str) -> bool:
-    """Verify the access token"""
-    if not PASSWORD_ENABLED:
-        return True  # No password protection, allow access
-    
-    if not token:
-        return False
-    
-    try:
-        token_hash, timestamp = token.split(":")
-        message = f"{ACCESS_PASSWORD}:{timestamp}"
-        expected_token = hmac.new(
-            SECRET_KEY.encode(),
-            message.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        return hmac.compare_digest(token_hash, expected_token)
-    except (ValueError, AttributeError):
-        return False
-
-
-def verify_password(password: str) -> bool:
-    """Verify the provided password"""
-    if not PASSWORD_ENABLED:
-        return True  # No password protection
-    return hmac.compare_digest(password, ACCESS_PASSWORD)
-
-
-# Dependency for protected routes
-async def verify_auth(
-    request: Request,
-    x_access_token: Optional[str] = Header(None, alias="X-Access-Token")
-):
-    """Dependency to verify authentication for protected routes
-    
-    Supports two authentication methods:
-    1. X-Access-Token header (for web frontend)
-    2. password query parameter (for Clash Verge and other clients)
-    """
-    if not PASSWORD_ENABLED:
-        return True  # No password protection enabled
-    
-    # Check URL password parameter first (for Clash Verge etc.)
-    url_password = request.query_params.get("password")
-    if url_password and verify_password(url_password):
-        return True
-    
-    # Then check X-Access-Token header (for web frontend)
-    if x_access_token and verify_access_token(x_access_token):
-        return True
-    
-    raise HTTPException(
-        status_code=401,
-        detail="Unauthorized: Invalid or missing access token/password",
-        headers={"WWW-Authenticate": "Bearer"}
-    )
-    return True
-
 
 def length(sth):
     if sth is None:
@@ -170,51 +77,6 @@ def length(sth):
 
 app = FastAPI()
 
-
-# Authentication endpoint
-@app.post("/auth/verify", response_model=AuthResponse)
-async def auth_verify(auth_request: AuthRequest):
-    """Verify password and return access token"""
-    # Debug logging
-    print(f"[AUTH DEBUG] PASSWORD_ENABLED: {PASSWORD_ENABLED}")
-    print(f"[AUTH DEBUG] ACCESS_PASSWORD set: {bool(ACCESS_PASSWORD)}")
-    print(f"[AUTH DEBUG] ACCESS_PASSWORD length: {len(ACCESS_PASSWORD) if ACCESS_PASSWORD else 0}")
-    print(f"[AUTH DEBUG] Input password length: {len(auth_request.password)}")
-    print(f"[AUTH DEBUG] SECRET_KEY set: {bool(SECRET_KEY)}")
-    print(f"[AUTH DEBUG] SECRET_KEY length: {len(SECRET_KEY) if SECRET_KEY else 0}")
-    
-    if not PASSWORD_ENABLED:
-        return AuthResponse(
-            success=True,
-            token="",
-            message="Password protection is not enabled"
-        )
-    
-    password_match = verify_password(auth_request.password)
-    print(f"[AUTH DEBUG] Password match result: {password_match}")
-    
-    if password_match:
-        token = generate_access_token(auth_request.password)
-        return AuthResponse(
-            success=True,
-            token=token,
-            message="Authentication successful"
-        )
-    else:
-        return AuthResponse(
-            success=False,
-            message="Invalid password"
-        )
-
-
-@app.get("/auth/check")
-async def auth_check(x_access_token: Optional[str] = Header(None, alias="X-Access-Token")):
-    """Check if the current token is valid"""
-    if not PASSWORD_ENABLED:
-        return JSONResponse(content={"valid": True, "password_enabled": False})
-    
-    is_valid = verify_access_token(x_access_token)
-    return JSONResponse(content={"valid": is_valid, "password_enabled": True})
 
 
 # mainpage
@@ -233,7 +95,7 @@ async def robots():
 
 # subscription to proxy-provider
 @app.get("/provider")
-async def provider(request: Request, auth: bool = Depends(verify_auth)):
+async def provider(request: Request):
     headers = {'Content-Type': 'text/yaml;charset=utf-8'}
     url = request.query_params.get("url")
     async with httpx.AsyncClient() as client:
@@ -246,7 +108,7 @@ async def provider(request: Request, auth: bool = Depends(verify_auth)):
     
 # subscription converter api
 @app.get("/sub")
-async def sub(request: Request, auth: bool = Depends(verify_auth)):
+async def sub(request: Request):
     args = request.query_params
     # get interval
     if "interval" in args:
@@ -342,7 +204,7 @@ async def sub(request: Request, auth: bool = Depends(verify_auth)):
 
 # proxy
 @app.get("/proxy")
-async def proxy(request: Request, url: str, auth: bool = Depends(verify_auth)):
+async def proxy(request: Request, url: str):
     # check if url is in whitelist
     is_whitelisted = False
     for rule in config.configInstance.RULESET:
